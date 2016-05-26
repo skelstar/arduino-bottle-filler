@@ -6,7 +6,7 @@
 
 #define PIN            14
 #define NUMPIXELS      12
-#define PIXEL_BRIGHTNESS  10
+#define PIXEL_BRIGHTNESS  12
 
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800);
 
@@ -19,8 +19,8 @@ ADXL345 adxl; //variable adxl is an instance of the ADXL345 library
 #define PIN_SDA 4
 #define PIN_SCL 5
 
-#define   INACTIVITY_SECONDS  3
-#define   ADXL_ACTIVITY_STRENGTH  150   // 0-255 default was 75
+#define   LIGHTS_ON_SECONDS       20
+#define   ADXL_ACTIVITY_STRENGTH  200   // 0-255 default was 75
 
 void setup() {
 
@@ -58,48 +58,20 @@ void loop() {
   Serial.print("    Y=");  Serial.print(ay);    Serial.print(" g,");
   Serial.print("    Z=");  Serial.print(az);    Serial.println(" g");
   
-
-  //read interrupts source and look for triggerd actions
-  
-  //getInterruptSource clears all triggered actions after returning value
-  //so do not call again until you need to recheck for triggered actions
   byte interrupts = adxl.getInterruptSource();
-  
-/* // freefall
-  if(adxl.triggered(interrupts, ADXL345_FREE_FALL)){
-    Serial.println("freefall");
-    //add code here to do when freefall is sensed
-  } 
-  */
   
   //inactivity
   if (adxl.triggered(interrupts, ADXL345_INACTIVITY)){
     Serial.println("inactivity");
-    //add code here to do when inactivity is sensed
-
     pixelsOff();    
   }
   
   //activity
   if(adxl.triggered(interrupts, ADXL345_ACTIVITY)){
     Serial.println("activity"); 
-     //add code here to do when activity is sensed
-
     pixelsOn();
   }
-  
-/* //double tap
-  if(adxl.triggered(interrupts, ADXL345_DOUBLE_TAP)){
-    Serial.println("double tap");
-     //add code here to do when a 2X tap is sensed
-  }
-*/
-/* //tap
-  if(adxl.triggered(interrupts, ADXL345_SINGLE_TAP)){
-    Serial.println("tap");
-     //add code here to do when a tap is sensed
-  } */
-
+ 
   Serial.println("**********************");
   delay(500);
 }
@@ -108,7 +80,7 @@ void adxlSetup() {
     //set activity/ inactivity thresholds (0-255)
   adxl.setActivityThreshold(ADXL_ACTIVITY_STRENGTH); //62.5mg per increment
   adxl.setInactivityThreshold(ADXL_ACTIVITY_STRENGTH); //62.5mg per increment
-  adxl.setTimeInactivity(INACTIVITY_SECONDS); // how many seconds of no activity is inactive?
+  adxl.setTimeInactivity(LIGHTS_ON_SECONDS); // how many seconds of no activity is inactive?
  
   //look of activity movement on this axes - 1 == on; 0 == off 
   adxl.setActivityX(1);
@@ -125,17 +97,13 @@ void adxlSetup() {
   adxl.setTapDetectionOnY(0);
   adxl.setTapDetectionOnZ(0);
 
-/*  //set values for what is a tap, and what is a double tap (0-255)
+  //set values for what is a tap, and what is a double tap (0-255)
   adxl.setTapThreshold(50); //62.5mg per increment
   adxl.setTapDuration(15); //625us per increment
   adxl.setDoubleTapLatency(80); //1.25ms per increment
   adxl.setDoubleTapWindow(200); //1.25ms per increment
-*/ 
-/*  //set values for what is considered freefall (0-255)
-  adxl.setFreeFallThreshold(7); //(5 - 9) recommended - 62.5mg per increment
-  adxl.setFreeFallDuration(45); //(20 - 70) recommended - 5ms per increment
-  */
-/*  //setting all interrupts to take place on int pin 1
+ 
+  //setting all interrupts to take place on int pin 1
   //I had issues with int pin 2, was unable to reset it
   adxl.setInterruptMapping( ADXL345_INT_SINGLE_TAP_BIT,   ADXL345_INT1_PIN );
   adxl.setInterruptMapping( ADXL345_INT_DOUBLE_TAP_BIT,   ADXL345_INT1_PIN );
@@ -149,7 +117,6 @@ void adxlSetup() {
   adxl.setInterrupt( ADXL345_INT_FREE_FALL_BIT,  1);
   adxl.setInterrupt( ADXL345_INT_ACTIVITY_BIT,   1);
   adxl.setInterrupt( ADXL345_INT_INACTIVITY_BIT, 1);
-*/
 }
 
 void pixelsOn() {
