@@ -1,6 +1,7 @@
 #include <Adafruit_NeoPixel.h>
 #include <Wire.h>
 #include <ADXL345.h>
+#include <myStateMachine.h>
 
 // ----- neopixels ------
 
@@ -8,10 +9,28 @@
 #define NUMPIXELS      12
 #define PIXEL_BRIGHTNESS  12
 
-Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel ring = Adafruit_NeoPixel(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800);
 
-uint32_t PIXELS_RED = pixels.Color(PIXEL_BRIGHTNESS, 0, 0);
-uint32_t PIXELS_OFF = pixels.Color(0, 0, 0);
+uint32_t PIXEL_RED = ring.Color(PIXEL_BRIGHTNESS, 0, 0);
+uint32_t PIXEL_OFF = ring.Color(0, 0, 0);
+
+uint32_t pixels[12] = {
+            PIXEL_OFF,
+            PIXEL_OFF,
+            PIXEL_OFF,
+            PIXEL_OFF,
+            PIXEL_OFF,
+            PIXEL_OFF,
+            PIXEL_OFF,
+            PIXEL_OFF,
+            PIXEL_OFF,
+            PIXEL_OFF,
+            PIXEL_OFF,
+            PIXEL_OFF           
+          };
+
+int inactiveTime = 0;
+
 
 // ----- adxl -----
 
@@ -21,6 +40,18 @@ ADXL345 adxl; //variable adxl is an instance of the ADXL345 library
 
 #define   LIGHTS_ON_SECONDS       20
 #define   ADXL_ACTIVITY_STRENGTH  200   // 0-255 default was 75
+#define   ABOUT_TO_BE_INACTIVE_PERIOD   5000
+
+
+/* STATES */
+
+#define   BECOMING_ACTIVE       0
+#define   ACTIVE                1
+#define   ABOUT_TO_BE_INACTIVE  2
+#define   BECOME_INACTIVE       3
+#define   INACTIVE              4
+
+myStateMachine state(INACTIVE, true);
 
 void setup() {
 
@@ -28,7 +59,13 @@ void setup() {
   delay(500);
   Serial.println("Testing adxl345");
 
-  pixels.begin();
+  state.pushState(  "BECOMING_ACTIVE" );
+  state.pushState(  "ACTIVE" );
+  state.pushState(  "ABOUT_TO_BE_INACTIVE" );
+  state.pushState(  "BECOME_INACTIVE" );
+  state.pushState(  "INACTIVE" );
+
+  ring.begin();
 
   Wire.begin(PIN_SDA, PIN_SCL);
   delay(500);
@@ -41,39 +78,86 @@ void loop() {
   int x,y,z;  
   adxl.readXYZ(&x, &y, &z); //read the accelerometer values and store them in variables  x,y,z
 
-  // Output x,y,z values 
-  Serial.print("x: ");  Serial.print(x);
-  Serial.print(",    y: ");  Serial.print(y);
-  Serial.print(",    z: ");  Serial.print(z);
-
-
 // acceleration
   double xyz[3];
   double ax,ay,az;
   adxl.getAcceleration(xyz);
-  ax = xyz[0];
-  ay = xyz[1];
-  az = xyz[2];
-  Serial.print("    X=");  Serial.print(ax);    Serial.print(" g,");
-  Serial.print("    Y=");  Serial.print(ay);    Serial.print(" g,");
-  Serial.print("    Z=");  Serial.print(az);    Serial.println(" g");
   
   byte interrupts = adxl.getInterruptSource();
+
+  if (state.current == INACTIVE) {
+    if (adxl.triggered(interrupts, ADXL345_ACTIVITY)){
+      Serial.println("activity");
+      state.changeStateTo(BECOMING_ACTIVE);
+    }
+  } 
   
-  //inactivity
-  if (adxl.triggered(interrupts, ADXL345_INACTIVITY)){
-    Serial.println("inactivity");
-    pixelsOff();    
-  }
+  else if (state.current == BECOMING_ACTIVE) {
+      if (ringAddPixelUntilFull()) {
+        state.changeStateTo(ACTIVE);
+      }
+  } 
   
-  //activity
-  if(adxl.triggered(interrupts, ADXL345_ACTIVITY)){
-    Serial.println("activity"); 
-    pixelsOn();
+  else if (state.current == ACTIVE) {
+    if (adxl.triggered(interrupts, ADXL345_INACTIVITY)) {
+      Serial.println("inactivity");
+      inactiveTime = millis();
+      
+      state.changeStateTo(ABOUT_TO_BE_INACTIVE);
+    }
+  } 
+  
+  else if (state.current == ABOUT_TO_BE_INACTIVE) {
+    ringSetAlternatePixels(PIXEL_RED);
+    if (millis() > inactiveTime + ABOUT_TO_BE_INACTIVE_PERIOD)
+      state.changeStateTo(BECOME_INACTIVE);
+  } 
+  
+  else if (state.current == BECOME_INACTIVE) {
+    for (int i = 0; i < NUMPIXELS; i++) {
+      pixels[i] = PIXEL_OFF;
+    }
+    state.changeStateTo(INACTIVE);
   }
- 
-  Serial.println("**********************");
-  delay(500);
+
+
+  updatePixels();
+  ring.show();
+  
+  delay(200);
+}
+
+// returns true if all pixels are now RED (added)
+bool ringAddPixelUntilFull() {
+  int i = 0;
+  while (i < NUMPIXELS) {
+    if (pixels[i] == PIXEL_OFF) {
+      pixels[i] = PIXEL_RED;
+      return i == NUMPIXELS - 1;
+    }
+    i++;
+  }
+  return i >= NUMPIXELS;
+}
+
+void ringSetAlternatePixels(uint32_t color) {
+
+  bool evens = pixels[0] == PIXEL_OFF;
+
+  for (int i = 0; i < NUMPIXELS; i++) {
+    if ((evens && i % 2 == 0) || 
+        (!evens && i % 2 != 0)) {
+      pixels[i] = color;
+    } else {
+      pixels[i] = PIXEL_OFF;
+    }
+  }
+}
+
+void updatePixels() {
+  for (int i = 0; i < NUMPIXELS; i++) {
+    ring.setPixelColor(i, pixels[i]);
+  }
 }
 
 void adxlSetup() {
@@ -119,19 +203,18 @@ void adxlSetup() {
   adxl.setInterrupt( ADXL345_INT_INACTIVITY_BIT, 1);
 }
 
-void pixelsOn() {
-  pixelsSetAll(PIXELS_RED);
+void ringOn() {
+  ringSetAll(PIXEL_RED);
 }
 
-void pixelsOff() {
-  pixelsSetAll(PIXELS_OFF);
+void ringOff() {
+  ringSetAll(PIXEL_OFF);
 }
 
-void pixelsSetAll(uint32_t color) {
+void ringSetAll(uint32_t color) {
   
   for(int i=0; i<NUMPIXELS; i++){
-    pixels.setPixelColor(i, color);
+    ring.setPixelColor(i, color);
   }
-  pixels.show(); // This sends the updated pixel color to the hardware.
+  ring.show(); // This sends the updated pixel color to the hardware.
 }
-
