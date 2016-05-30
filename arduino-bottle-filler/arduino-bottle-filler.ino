@@ -2,6 +2,10 @@
 #include <Wire.h>
 #include <ADXL345.h>
 #include <myStateMachine.h>
+#include <RTClib.h>         // https://github.com/adafruit/RTClib
+
+#include <ESP8266WiFi.h>
+#include <DweetIO.h>
 
 // ----- neopixels ------
 
@@ -32,7 +36,7 @@ uint32_t pixels[12] = {
 int inactiveTime = 0;
 
 
-// ----- adxl -----
+// ----- adxl ---------------------------------
 
 ADXL345 adxl; //variable adxl is an instance of the ADXL345 library
 #define PIN_SDA 4
@@ -43,6 +47,7 @@ ADXL345 adxl; //variable adxl is an instance of the ADXL345 library
 #define   ABOUT_TO_BE_INACTIVE_PERIOD   5000
 
 
+// ----- State Machine -------------------------
 /* STATES */
 
 #define   BECOMING_ACTIVE       0
@@ -52,6 +57,22 @@ ADXL345 adxl; //variable adxl is an instance of the ADXL345 library
 #define   INACTIVE              4
 
 myStateMachine state(INACTIVE, true);
+
+// ----- RTC ------------------------------------
+
+#define DS3231_I2C_ADDRESS 0x68
+RTC_DS3231 rtc;
+
+// --------- Dweetio ----------------------------
+
+#define   DWEETIO_CHANNEL_NAME "DWEETIOTIMETEST1" // shouldn't exist.. we just want the datetime from response
+
+DweetIO channel(DWEETIO_CHANNEL_NAME, 0, 1000);
+
+// --------- wifi ------------
+
+const char* ssid = "LeilaNet2";
+const char* password = "ec1122%f*&";
 
 void setup() {
 
@@ -72,6 +93,8 @@ void setup() {
 
   adxl.powerOn();
   adxlSetup();
+
+  setupRTC();
 }
 
 void loop() {
@@ -123,8 +146,59 @@ void loop() {
 
   updatePixels();
   ring.show();
+
+  debugRTC();
   
   delay(200);
+}
+
+DateTime getDweetTimeDate() {
+  
+  WiFi.begin(ssid, password);
+ 
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+  
+  channel.value = "999";
+
+  channel.GetTime();
+  WiFi.mode(WIFI_OFF);
+  
+  return DateTime(2016, 1, 1, channel.hours, channel.minutes, channel.seconds);
+}
+
+void setupRTC() {
+  if (! rtc.begin()) {
+    Serial.println("Couldn't find RTC");
+    while (1);
+  }
+
+//  if (rtc.lostPower()) {
+//    Serial.println("RTC lost power, lets set the time!");
+    // following line sets the RTC to the date & time this sketch was compiled
+    // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    // This line sets the RTC with an explicit date & time, for example to set
+    // January 21, 2014 at 3am you would call:
+    Serial.println("Setting the time from Dweetio!");
+    DateTime dt = getDweetTimeDate();
+    rtc.adjust(dt);
+//  }
+}
+
+void debugRTC() {
+  DateTime now = rtc.now();
+
+  Serial.println("RTC debug");
+  Serial.print(now.hour(), DEC);
+  Serial.print(':');
+  Serial.print(now.minute(), DEC);
+  Serial.print(':');
+  Serial.print(now.second(), DEC);
+  Serial.println();
 }
 
 // returns true if all pixels are now RED (added)
@@ -218,3 +292,4 @@ void ringSetAll(uint32_t color) {
   }
   ring.show(); // This sends the updated pixel color to the hardware.
 }
+
