@@ -1,18 +1,30 @@
+#include <Time.h>
+#include <TimeLib.h>
+
 #include <Adafruit_NeoPixel.h>
 #include <Wire.h>
 #include <ADXL345.h>
 #include <myStateMachine.h>
+#include <RTClib.h>         // https://github.com/adafruit/RTClib
+
+#include <ESP8266WiFi.h>
+#include <DweetIO.h>
+#include <Streaming.h>
 
 // ----- neopixels ------
 
 #define PIN            14
 #define NUMPIXELS      12
 #define PIXEL_BRIGHTNESS  12
+#define CLOCK_ORIENTATION_OFFSET  9
 
 Adafruit_NeoPixel ring = Adafruit_NeoPixel(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800);
 
-uint32_t PIXEL_RED = ring.Color(PIXEL_BRIGHTNESS, 0, 0);
-uint32_t PIXEL_OFF = ring.Color(0, 0, 0);
+uint32_t  PIXEL_RED = ring.Color(PIXEL_BRIGHTNESS, 0, 0);
+uint32_t  PIXEL_OFF = ring.Color(0, 0, 0);
+uint32_t  PIXEL_HOUR_COLOUR = ring.Color(0, 5, 0); // green?
+uint32_t  PIXEL_MINUTE_COLOUR = ring.Color(0, 0, 5); // blue?
+uint32_t  PIXEL_15MIN = ring.Color(1, 0, 0);    // light red
 
 uint32_t pixels[12] = {
             PIXEL_OFF,
@@ -32,17 +44,18 @@ uint32_t pixels[12] = {
 int inactiveTime = 0;
 
 
-// ----- adxl -----
+// ----- adxl ---------------------------------
 
 ADXL345 adxl; //variable adxl is an instance of the ADXL345 library
 #define PIN_SDA 4
 #define PIN_SCL 5
 
-#define   LIGHTS_ON_SECONDS       20
+#define   LIGHTS_ON_SECONDS       30
 #define   ADXL_ACTIVITY_STRENGTH  200   // 0-255 default was 75
-#define   ABOUT_TO_BE_INACTIVE_PERIOD   5000
+#define   ABOUT_TO_BE_INACTIVE_PERIOD   5000  // ms
 
 
+// ----- State Machine -------------------------
 /* STATES */
 
 #define   BECOMING_ACTIVE       0
@@ -52,6 +65,25 @@ ADXL345 adxl; //variable adxl is an instance of the ADXL345 library
 #define   INACTIVE              4
 
 myStateMachine state(INACTIVE, true);
+
+// ----- RTC ------------------------------------
+
+#define DS3231_I2C_ADDRESS 0x68
+RTC_DS3231 rtc;
+DateTime latestDt;
+time_t secondsElapsed = 0;
+time_t activeStarted = 0;
+
+// --------- Dweetio ----------------------------
+
+#define   DWEETIO_CHANNEL_NAME "DWEETIOTIMETEST1" // shouldn't exist.. we just want the datetime from response
+
+DweetIO channel(DWEETIO_CHANNEL_NAME, true);
+
+// --------- wifi ------------
+
+const char* ssid = "LeilaNet2";
+const char* password = "ec1122%f*&";
 
 void setup() {
 
@@ -72,6 +104,8 @@ void setup() {
 
   adxl.powerOn();
   adxlSetup();
+
+  setupRTC();
 }
 
 void loop() {
@@ -85,10 +119,14 @@ void loop() {
   
   byte interrupts = adxl.getInterruptSource();
 
-  if (state.current == INACTIVE) {
+  if (state.current == INACTIVE) { 
     if (adxl.triggered(interrupts, ADXL345_ACTIVITY)){
       Serial.println("activity");
       state.changeStateTo(BECOMING_ACTIVE);
+    }
+    else {
+      latestDt = rtc.now();
+      ringClock(latestDt);
     }
   } 
   
@@ -96,11 +134,14 @@ void loop() {
       if (ringAddPixelUntilFull()) {
         state.changeStateTo(ACTIVE);
       }
+      activeStarted = secondsElapsed;
   } 
   
   else if (state.current == ACTIVE) {
-    if (adxl.triggered(interrupts, ADXL345_INACTIVITY)) {
-      Serial.println("inactivity");
+
+    Serial << "Secs: " << secondsElapsed << endl;
+
+    if (secondsElapsed > activeStarted + LIGHTS_ON_SECONDS) {
       inactiveTime = millis();
       
       state.changeStateTo(ABOUT_TO_BE_INACTIVE);
@@ -120,11 +161,90 @@ void loop() {
     state.changeStateTo(INACTIVE);
   }
 
-
   updatePixels();
   ring.show();
-  
+  secondsElapsed = now();
+
   delay(200);
+}
+
+DateTime getDweetTimeDate() {
+  
+  WiFi.begin(ssid, password);
+ 
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+  
+  channel.value = "999";
+
+  DateTime result = channel.GetTime();
+  Serial << "channel.GetTime(): " << result.hour() << ":" << result.minute() << endl;
+
+  WiFi.mode(WIFI_OFF);
+  
+  return result;
+}
+
+void setupRTC() {
+  
+  if (! rtc.begin()) {
+    Serial.println("Couldn't find RTC");
+    while (1);
+  }
+    
+  Serial.println("Setting the time from Dweetio!");
+  latestDt = getDweetTimeDate();
+  rtc.adjust(DateTime(2016, 1, 1, latestDt.hour(), latestDt.minute(), latestDt.second()));
+}
+
+void printDateTime(String dtName, DateTime dt) {
+
+  Serial << dtName << ": "<< dt.hour() << 
+                      ":" << dt.minute() << 
+                      ":" << dt.second() << 
+                      endl;
+}
+
+void ringClock(DateTime dt) {
+
+  int hr = dt.hour();
+  if (hr > 12)
+    hr -= 12;
+  hr = ApplyClockOrientationCompensation(hr);
+  
+  float fmin = (dt.minute() / 60.0) * 12.0;
+  int mm = (int)fmin;
+  mm = ApplyClockOrientationCompensation(mm);
+
+  
+  for (int i = 0; i < NUMPIXELS; i++) {
+    pixels[i] = PIXEL_OFF;
+  }
+
+  pixels[0] = PIXEL_15MIN;
+  pixels[3] = PIXEL_15MIN;
+  pixels[6] = PIXEL_15MIN;
+  pixels[9] = PIXEL_15MIN;  
+  
+  // really dim pixels for 15min indicators
+  pixels[0] == PIXEL_HOUR_COLOUR;
+  
+  
+  
+  pixels[hr] = PIXEL_HOUR_COLOUR;
+  if (dt.second() % 2 == 0)
+    pixels[mm] = PIXEL_MINUTE_COLOUR;
+}
+
+int ApplyClockOrientationCompensation(int tm) {
+
+  if (tm + CLOCK_ORIENTATION_OFFSET > 11)
+    return tm = tm + CLOCK_ORIENTATION_OFFSET - 12;
+  return tm + CLOCK_ORIENTATION_OFFSET;
 }
 
 // returns true if all pixels are now RED (added)
@@ -218,3 +338,4 @@ void ringSetAll(uint32_t color) {
   }
   ring.show(); // This sends the updated pixel color to the hardware.
 }
+
