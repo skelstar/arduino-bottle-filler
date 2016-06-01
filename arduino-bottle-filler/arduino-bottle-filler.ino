@@ -9,7 +9,10 @@
 
 #include <ESP8266WiFi.h>
 #include <DweetIO.h>
+<<<<<<< HEAD
 #include <Streaming.h>
+=======
+>>>>>>> origin/master
 
 // ----- neopixels ------
 
@@ -70,15 +73,22 @@ myStateMachine state(INACTIVE, true);
 
 #define DS3231_I2C_ADDRESS 0x68
 RTC_DS3231 rtc;
+<<<<<<< HEAD
 DateTime latestDt;
 time_t secondsElapsed = 0;
 time_t activeStarted = 0;
+=======
+>>>>>>> origin/master
 
 // --------- Dweetio ----------------------------
 
 #define   DWEETIO_CHANNEL_NAME "DWEETIOTIMETEST1" // shouldn't exist.. we just want the datetime from response
 
+<<<<<<< HEAD
 DweetIO channel(DWEETIO_CHANNEL_NAME, true);
+=======
+DweetIO channel(DWEETIO_CHANNEL_NAME, 0, 1000);
+>>>>>>> origin/master
 
 // --------- wifi ------------
 
@@ -163,8 +173,14 @@ void loop() {
 
   updatePixels();
   ring.show();
+<<<<<<< HEAD
   secondsElapsed = now();
 
+=======
+
+  debugRTC();
+  
+>>>>>>> origin/master
   delay(200);
 }
 
@@ -181,6 +197,7 @@ DateTime getDweetTimeDate() {
   
   channel.value = "999";
 
+<<<<<<< HEAD
   DateTime result = channel.GetTime();
   Serial << "channel.GetTime(): " << result.hour() << ":" << result.minute() << endl;
 
@@ -191,10 +208,20 @@ DateTime getDweetTimeDate() {
 
 void setupRTC() {
   
+=======
+  channel.GetTime();
+  WiFi.mode(WIFI_OFF);
+  
+  return DateTime(2016, 1, 1, channel.hours, channel.minutes, channel.seconds);
+}
+
+void setupRTC() {
+>>>>>>> origin/master
   if (! rtc.begin()) {
     Serial.println("Couldn't find RTC");
     while (1);
   }
+<<<<<<< HEAD
     
   Serial.println("Setting the time from Dweetio!");
   latestDt = getDweetTimeDate();
@@ -245,6 +272,31 @@ int ApplyClockOrientationCompensation(int tm) {
   if (tm + CLOCK_ORIENTATION_OFFSET > 11)
     return tm = tm + CLOCK_ORIENTATION_OFFSET - 12;
   return tm + CLOCK_ORIENTATION_OFFSET;
+=======
+
+//  if (rtc.lostPower()) {
+//    Serial.println("RTC lost power, lets set the time!");
+    // following line sets the RTC to the date & time this sketch was compiled
+    // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    // This line sets the RTC with an explicit date & time, for example to set
+    // January 21, 2014 at 3am you would call:
+    Serial.println("Setting the time from Dweetio!");
+    DateTime dt = getDweetTimeDate();
+    rtc.adjust(dt);
+//  }
+}
+
+void debugRTC() {
+  DateTime now = rtc.now();
+
+  Serial.println("RTC debug");
+  Serial.print(now.hour(), DEC);
+  Serial.print(':');
+  Serial.print(now.minute(), DEC);
+  Serial.print(':');
+  Serial.print(now.second(), DEC);
+  Serial.println();
+>>>>>>> origin/master
 }
 
 // returns true if all pixels are now RED (added)
