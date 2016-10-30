@@ -73,22 +73,16 @@ myStateMachine state(INACTIVE, true);
 
 #define DS3231_I2C_ADDRESS 0x68
 RTC_DS3231 rtc;
-<<<<<<< HEAD
 DateTime latestDt;
 time_t secondsElapsed = 0;
 time_t activeStarted = 0;
-=======
->>>>>>> origin/master
 
 // --------- Dweetio ----------------------------
 
 #define   DWEETIO_CHANNEL_NAME "DWEETIOTIMETEST1" // shouldn't exist.. we just want the datetime from response
 
-<<<<<<< HEAD
 DweetIO channel(DWEETIO_CHANNEL_NAME, true);
-=======
-DweetIO channel(DWEETIO_CHANNEL_NAME, 0, 1000);
->>>>>>> origin/master
+
 
 // --------- wifi ------------
 
