@@ -1,387 +1,249 @@
-#include <Time.h>
-#include <TimeLib.h>
-
-#include <Adafruit_NeoPixel.h>
-#include <Wire.h>
-#include <ADXL345.h>
-#include <myStateMachine.h>
-#include <RTClib.h>         // https://github.com/adafruit/RTClib
 
 #include <ESP8266WiFi.h>
-#include <DweetIO.h>
-<<<<<<< HEAD
-#include <Streaming.h>
-=======
->>>>>>> origin/master
+#include <ESP8266mDNS.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
+#include "appconfig.h"
+#include "paj7620.h"
 
-// ----- neopixels ------
 
-#define PIN            14
+#include <Adafruit_NeoPixel.h>
+
+/* ----------------------------------------------------------- */
+
+// NEOPIXEL
+#define PIN            12
 #define NUMPIXELS      12
-#define PIXEL_BRIGHTNESS  12
-#define CLOCK_ORIENTATION_OFFSET  9
 
-Adafruit_NeoPixel ring = Adafruit_NeoPixel(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800);
+int head = 4;
+#define TRAIL_LENGTH    6
+int brightnesses[] = {140,125,75,30,10,5,0,0,0,0,0,0};
+bool lightsOn = false;
 
-uint32_t  PIXEL_RED = ring.Color(PIXEL_BRIGHTNESS, 0, 0);
-uint32_t  PIXEL_OFF = ring.Color(0, 0, 0);
-uint32_t  PIXEL_HOUR_COLOUR = ring.Color(0, 5, 0); // green?
-uint32_t  PIXEL_MINUTE_COLOUR = ring.Color(0, 0, 5); // blue?
-uint32_t  PIXEL_15MIN = ring.Color(1, 0, 0);    // light red
+Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800);
 
-uint32_t pixels[12] = {
-            PIXEL_OFF,
-            PIXEL_OFF,
-            PIXEL_OFF,
-            PIXEL_OFF,
-            PIXEL_OFF,
-            PIXEL_OFF,
-            PIXEL_OFF,
-            PIXEL_OFF,
-            PIXEL_OFF,
-            PIXEL_OFF,
-            PIXEL_OFF,
-            PIXEL_OFF           
-          };
+int delayval = 400;
+unsigned long timer;
 
-int inactiveTime = 0;
+// GESTURES
+#define GES_REACTION_TIME        500             // You can adjust the reaction time according to the actual circumstance.
+#define GES_ENTRY_TIME          800             // When you want to recognize the Forward/Backward gestures, your gestures' reaction time must less than GES_ENTRY_TIME(0.8s).
+#define GES_QUIT_TIME           1000
 
 
-// ----- adxl ---------------------------------
-
-ADXL345 adxl; //variable adxl is an instance of the ADXL345 library
-#define PIN_SDA 4
-#define PIN_SCL 5
-
-#define   LIGHTS_ON_SECONDS       30
-#define   ADXL_ACTIVITY_STRENGTH  200   // 0-255 default was 75
-#define   ABOUT_TO_BE_INACTIVE_PERIOD   5000  // ms
-
-
-// ----- State Machine -------------------------
-/* STATES */
-
-#define   BECOMING_ACTIVE       0
-#define   ACTIVE                1
-#define   ABOUT_TO_BE_INACTIVE  2
-#define   BECOME_INACTIVE       3
-#define   INACTIVE              4
-
-myStateMachine state(INACTIVE, true);
-
-// ----- RTC ------------------------------------
-
-#define DS3231_I2C_ADDRESS 0x68
-RTC_DS3231 rtc;
-DateTime latestDt;
-time_t secondsElapsed = 0;
-time_t activeStarted = 0;
-
-// --------- Dweetio ----------------------------
-
-#define   DWEETIO_CHANNEL_NAME "DWEETIOTIMETEST1" // shouldn't exist.. we just want the datetime from response
-
-DweetIO channel(DWEETIO_CHANNEL_NAME, true);
-
-
-// --------- wifi ------------
-
-const char* ssid = "LeilaNet2";
-const char* password = "ec1122%f*&";
-
+/* ----------------------------------------------------------- */
 void setup() {
+    Serial.begin(115200);
+    Serial.println("Booting");
 
-  Serial.begin(115200);
-  delay(500);
-  Serial.println("Testing adxl345");
+    pixels.begin();
+    for (int i=0; i<NUMPIXELS; i+=2)
+        pixels.setPixelColor(i, pixels.Color(150,0,0));
+    pixels.show(); // This sends the updated pixel color to the hardware.
 
-  state.pushState(  "BECOMING_ACTIVE" );
-  state.pushState(  "ACTIVE" );
-  state.pushState(  "ABOUT_TO_BE_INACTIVE" );
-  state.pushState(  "BECOME_INACTIVE" );
-  state.pushState(  "INACTIVE" );
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
+    while (WiFi.waitForConnectResult() != WL_CONNECTED) {
+        Serial.println("Connection Failed! Rebooting...");
+        delay(5000);
+        ESP.restart();
+    }
+    
+    ArduinoOTA.setHostname(host);
+    
+    ArduinoOTA.onStart([]() {
+        Serial.println("Start");
+    });
+    ArduinoOTA.onEnd([]() {
+        Serial.println("\nEnd");
+    });
+    
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    });
+    
+    ArduinoOTA.onError([](ota_error_t error) {
+        Serial.printf("Error[%u]: ", error);
+        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+        else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
 
-  ring.begin();
+    ArduinoOTA.begin();
+    
+    Serial.println("Ready");
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
 
-  Wire.begin(PIN_SDA, PIN_SCL);
-  delay(500);
+    // GESTUREs
 
-  adxl.powerOn();
-  adxlSetup();
+    uint8_t error = 0;
 
-  setupRTC();
+    error = paj7620Init();          // initialize Paj7620 registers
+    if (error)
+    {
+        Serial.print("INIT ERROR,CODE:");
+        Serial.println(error);
+    }
+    else
+    {
+        Serial.println("INIT OK");
+    }
+
+    timer = millis();
 }
+
+/* ----------------------------------------------------------- */
 
 void loop() {
-  int x,y,z;  
-  adxl.readXYZ(&x, &y, &z); //read the accelerometer values and store them in variables  x,y,z
 
-// acceleration
-  double xyz[3];
-  double ax,ay,az;
-  adxl.getAcceleration(xyz);
-  
-  byte interrupts = adxl.getInterruptSource();
+    bool found = ReadGestures();
 
-  if (state.current == INACTIVE) { 
-    if (adxl.triggered(interrupts, ADXL345_ACTIVITY)){
-      Serial.println("activity");
-      state.changeStateTo(BECOMING_ACTIVE);
+    if (found || timer + 3000 > millis() ) {
+        if (found)
+            timer = millis();
+        int count = 0;
+        int pointer = head;
+        while (count < 12) {
+            pixels.setPixelColor(pointer, pixels.Color(brightnesses[count++],0,0));
+            pointer--;
+            if (pointer < 0)
+                pointer = NUMPIXELS - 1;
+        }
+        pixels.show();
+        head++;
+        if (head >= NUMPIXELS)
+            head = 0;
+            
+        delay(delayval);
     }
     else {
-      latestDt = rtc.now();
-      ringClock(latestDt);
+        for (int i=0; i< 12; i++) {
+            pixels.setPixelColor(i, pixels.Color(0,0,0));
+        }
+        pixels.show();
     }
-  } 
-  
-  else if (state.current == BECOMING_ACTIVE) {
-      if (ringAddPixelUntilFull()) {
-        state.changeStateTo(ACTIVE);
-      }
-      activeStarted = secondsElapsed;
-  } 
-  
-  else if (state.current == ACTIVE) {
-
-    Serial << "Secs: " << secondsElapsed << endl;
-
-    if (secondsElapsed > activeStarted + LIGHTS_ON_SECONDS) {
-      inactiveTime = millis();
-      
-      state.changeStateTo(ABOUT_TO_BE_INACTIVE);
-    }
-  } 
-  
-  else if (state.current == ABOUT_TO_BE_INACTIVE) {
-    ringSetAlternatePixels(PIXEL_RED);
-    if (millis() > inactiveTime + ABOUT_TO_BE_INACTIVE_PERIOD)
-      state.changeStateTo(BECOME_INACTIVE);
-  } 
-  
-  else if (state.current == BECOME_INACTIVE) {
-    for (int i = 0; i < NUMPIXELS; i++) {
-      pixels[i] = PIXEL_OFF;
-    }
-    state.changeStateTo(INACTIVE);
-  }
-
-  updatePixels();
-  ring.show();
-<<<<<<< HEAD
-  secondsElapsed = now();
-
-=======
-
-  debugRTC();
-  
->>>>>>> origin/master
-  delay(200);
-}
-
-DateTime getDweetTimeDate() {
-  
-  WiFi.begin(ssid, password);
- 
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("");
-  Serial.println("WiFi connected");
-  
-  channel.value = "999";
-
-<<<<<<< HEAD
-  DateTime result = channel.GetTime();
-  Serial << "channel.GetTime(): " << result.hour() << ":" << result.minute() << endl;
-
-  WiFi.mode(WIFI_OFF);
-  
-  return result;
-}
-
-void setupRTC() {
-  
-=======
-  channel.GetTime();
-  WiFi.mode(WIFI_OFF);
-  
-  return DateTime(2016, 1, 1, channel.hours, channel.minutes, channel.seconds);
-}
-
-void setupRTC() {
->>>>>>> origin/master
-  if (! rtc.begin()) {
-    Serial.println("Couldn't find RTC");
-    while (1);
-  }
-<<<<<<< HEAD
     
-  Serial.println("Setting the time from Dweetio!");
-  latestDt = getDweetTimeDate();
-  rtc.adjust(DateTime(2016, 1, 1, latestDt.hour(), latestDt.minute(), latestDt.second()));
+    ArduinoOTA.handle();
 }
 
-void printDateTime(String dtName, DateTime dt) {
+bool ReadGestures() {
+    return true;
+    
+    uint8_t data = 0, data1 = 0, error;
+    bool found = false;
 
-  Serial << dtName << ": "<< dt.hour() << 
-                      ":" << dt.minute() << 
-                      ":" << dt.second() << 
-                      endl;
-}
-
-void ringClock(DateTime dt) {
-
-  int hr = dt.hour();
-  if (hr > 12)
-    hr -= 12;
-  hr = ApplyClockOrientationCompensation(hr);
-  
-  float fmin = (dt.minute() / 60.0) * 12.0;
-  int mm = (int)fmin;
-  mm = ApplyClockOrientationCompensation(mm);
-
-  
-  for (int i = 0; i < NUMPIXELS; i++) {
-    pixels[i] = PIXEL_OFF;
-  }
-
-  pixels[0] = PIXEL_15MIN;
-  pixels[3] = PIXEL_15MIN;
-  pixels[6] = PIXEL_15MIN;
-  pixels[9] = PIXEL_15MIN;  
-  
-  // really dim pixels for 15min indicators
-  pixels[0] == PIXEL_HOUR_COLOUR;
-  
-  
-  
-  pixels[hr] = PIXEL_HOUR_COLOUR;
-  if (dt.second() % 2 == 0)
-    pixels[mm] = PIXEL_MINUTE_COLOUR;
-}
-
-int ApplyClockOrientationCompensation(int tm) {
-
-  if (tm + CLOCK_ORIENTATION_OFFSET > 11)
-    return tm = tm + CLOCK_ORIENTATION_OFFSET - 12;
-  return tm + CLOCK_ORIENTATION_OFFSET;
-=======
-
-//  if (rtc.lostPower()) {
-//    Serial.println("RTC lost power, lets set the time!");
-    // following line sets the RTC to the date & time this sketch was compiled
-    // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-    // This line sets the RTC with an explicit date & time, for example to set
-    // January 21, 2014 at 3am you would call:
-    Serial.println("Setting the time from Dweetio!");
-    DateTime dt = getDweetTimeDate();
-    rtc.adjust(dt);
-//  }
-}
-
-void debugRTC() {
-  DateTime now = rtc.now();
-
-  Serial.println("RTC debug");
-  Serial.print(now.hour(), DEC);
-  Serial.print(':');
-  Serial.print(now.minute(), DEC);
-  Serial.print(':');
-  Serial.print(now.second(), DEC);
-  Serial.println();
->>>>>>> origin/master
-}
-
-// returns true if all pixels are now RED (added)
-bool ringAddPixelUntilFull() {
-  int i = 0;
-  while (i < NUMPIXELS) {
-    if (pixels[i] == PIXEL_OFF) {
-      pixels[i] = PIXEL_RED;
-      return i == NUMPIXELS - 1;
+    error = paj7620ReadReg(0x43, 1, &data);             // Read Bank_0_Reg_0x43/0x44 for gesture result.
+    if (!error)
+    {
+        switch (data)                                   // When different gestures be detected, the variable 'data' will be set to different values by paj7620ReadReg(0x43, 1, &data).
+        {
+            case GES_RIGHT_FLAG:
+                delay(GES_ENTRY_TIME);
+                paj7620ReadReg(0x43, 1, &data);
+                if(data == GES_FORWARD_FLAG)
+                {
+                    Serial.println("Forward");
+                    delay(GES_QUIT_TIME);
+                }
+                else if(data == GES_BACKWARD_FLAG)
+                {
+                    Serial.println("Backward");
+                    delay(GES_QUIT_TIME);
+                }
+                else
+                {
+                    Serial.println("Right");
+                }
+                found = true;
+                break;
+            case GES_LEFT_FLAG:
+                delay(GES_ENTRY_TIME);
+                paj7620ReadReg(0x43, 1, &data);
+                if(data == GES_FORWARD_FLAG)
+                {
+                    Serial.println("Forward");
+                    delay(GES_QUIT_TIME);
+                }
+                else if(data == GES_BACKWARD_FLAG)
+                {
+                    Serial.println("Backward");
+                    delay(GES_QUIT_TIME);
+                }
+                else
+                {
+                    Serial.println("Left");
+                }
+                found = true;
+                break;
+            case GES_UP_FLAG:
+                delay(GES_ENTRY_TIME);
+                paj7620ReadReg(0x43, 1, &data);
+                if(data == GES_FORWARD_FLAG)
+                {
+                    Serial.println("Forward");
+                    delay(GES_QUIT_TIME);
+                }
+                else if(data == GES_BACKWARD_FLAG)
+                {
+                    Serial.println("Backward");
+                    delay(GES_QUIT_TIME);
+                }
+                else
+                {
+                    Serial.println("Up");
+                }
+                found = true;
+                break;
+            case GES_DOWN_FLAG:
+                delay(GES_ENTRY_TIME);
+                paj7620ReadReg(0x43, 1, &data);
+                if(data == GES_FORWARD_FLAG)
+                {
+                    Serial.println("Forward");
+                    delay(GES_QUIT_TIME);
+                }
+                else if(data == GES_BACKWARD_FLAG)
+                {
+                    Serial.println("Backward");
+                    delay(GES_QUIT_TIME);
+                }
+                else
+                {
+                    Serial.println("Down");
+                }
+                found = true;
+                break;
+            case GES_FORWARD_FLAG:
+                Serial.println("Forward");
+                delay(GES_QUIT_TIME);
+                found = true;
+                break;
+            case GES_BACKWARD_FLAG:
+                Serial.println("Backward");
+                delay(GES_QUIT_TIME);
+                found = true;
+                break;
+            case GES_CLOCKWISE_FLAG:
+                Serial.println("Clockwise");
+                found = true;
+                break;
+            case GES_COUNT_CLOCKWISE_FLAG:
+                Serial.println("anti-clockwise");
+                found = true;
+                break;
+            default:
+                paj7620ReadReg(0x44, 1, &data1);
+                if (data1 == GES_WAVE_FLAG)
+                {
+                    Serial.println("wave");
+                }
+                break;
+        }
+        return found;
     }
-    i++;
-  }
-  return i >= NUMPIXELS;
 }
 
-void ringSetAlternatePixels(uint32_t color) {
-
-  bool evens = pixels[0] == PIXEL_OFF;
-
-  for (int i = 0; i < NUMPIXELS; i++) {
-    if ((evens && i % 2 == 0) || 
-        (!evens && i % 2 != 0)) {
-      pixels[i] = color;
-    } else {
-      pixels[i] = PIXEL_OFF;
-    }
-  }
-}
-
-void updatePixels() {
-  for (int i = 0; i < NUMPIXELS; i++) {
-    ring.setPixelColor(i, pixels[i]);
-  }
-}
-
-void adxlSetup() {
-    //set activity/ inactivity thresholds (0-255)
-  adxl.setActivityThreshold(ADXL_ACTIVITY_STRENGTH); //62.5mg per increment
-  adxl.setInactivityThreshold(ADXL_ACTIVITY_STRENGTH); //62.5mg per increment
-  adxl.setTimeInactivity(LIGHTS_ON_SECONDS); // how many seconds of no activity is inactive?
- 
-  //look of activity movement on this axes - 1 == on; 0 == off 
-  adxl.setActivityX(1);
-  adxl.setActivityY(1);
-  adxl.setActivityZ(1);
- 
-  //look of inactivity movement on this axes - 1 == on; 0 == off
-  adxl.setInactivityX(1);
-  adxl.setInactivityY(1);
-  adxl.setInactivityZ(1);
- 
-  //look of tap movement on this axes - 1 == on; 0 == off
-  adxl.setTapDetectionOnX(0);
-  adxl.setTapDetectionOnY(0);
-  adxl.setTapDetectionOnZ(0);
-
-  //set values for what is a tap, and what is a double tap (0-255)
-  adxl.setTapThreshold(50); //62.5mg per increment
-  adxl.setTapDuration(15); //625us per increment
-  adxl.setDoubleTapLatency(80); //1.25ms per increment
-  adxl.setDoubleTapWindow(200); //1.25ms per increment
- 
-  //setting all interrupts to take place on int pin 1
-  //I had issues with int pin 2, was unable to reset it
-  adxl.setInterruptMapping( ADXL345_INT_SINGLE_TAP_BIT,   ADXL345_INT1_PIN );
-  adxl.setInterruptMapping( ADXL345_INT_DOUBLE_TAP_BIT,   ADXL345_INT1_PIN );
-  adxl.setInterruptMapping( ADXL345_INT_FREE_FALL_BIT,    ADXL345_INT1_PIN );
-  adxl.setInterruptMapping( ADXL345_INT_ACTIVITY_BIT,     ADXL345_INT1_PIN );
-  adxl.setInterruptMapping( ADXL345_INT_INACTIVITY_BIT,   ADXL345_INT1_PIN );
- 
-  //register interrupt actions - 1 == on; 0 == off  
-  adxl.setInterrupt( ADXL345_INT_SINGLE_TAP_BIT, 1);
-  adxl.setInterrupt( ADXL345_INT_DOUBLE_TAP_BIT, 1);
-  adxl.setInterrupt( ADXL345_INT_FREE_FALL_BIT,  1);
-  adxl.setInterrupt( ADXL345_INT_ACTIVITY_BIT,   1);
-  adxl.setInterrupt( ADXL345_INT_INACTIVITY_BIT, 1);
-}
-
-void ringOn() {
-  ringSetAll(PIXEL_RED);
-}
-
-void ringOff() {
-  ringSetAll(PIXEL_OFF);
-}
-
-void ringSetAll(uint32_t color) {
-  
-  for(int i=0; i<NUMPIXELS; i++){
-    ring.setPixelColor(i, color);
-  }
-  ring.show(); // This sends the updated pixel color to the hardware.
-}
 
