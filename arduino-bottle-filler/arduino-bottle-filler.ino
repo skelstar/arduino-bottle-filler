@@ -15,7 +15,7 @@
 #define NUMPIXELS      1
 #define DELETE_WINDOW   10000    // ms
 
-char versionText[] = "MQTT Bottle Feeder v0.9";
+char versionText[] = "MQTT Bottle Feeder v0.9.1";
 
 
 /* ----------------------------------------------------------- */
@@ -24,9 +24,9 @@ char versionText[] = "MQTT Bottle Feeder v0.9";
 
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
-uint32_t COLOR_BUTTON_PRESSED = pixels.Color(0, 100, 0);
-uint32_t COLOR_NORMAL = pixels.Color(100, 0, 0);
-uint32_t COLOR_DELETED = pixels.Color(255, 0, 0);
+uint32_t COLOR_BUTTON_PRESSED = pixels.Color(0, 50, 0);
+uint32_t COLOR_NORMAL = pixels.Color(50, 0, 0);
+uint32_t COLOR_DELETED = pixels.Color(100, 0, 0);
 uint32_t COLOR_OFF = pixels.Color(0, 0, 0);
 
 /* ----------------------------------------------------------- */
