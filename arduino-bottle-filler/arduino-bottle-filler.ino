@@ -28,7 +28,7 @@
 #define MED_BRIGHT      30
 #define LOW_BRIGHT      15
 
-char versionText[] = "MQTT Bottle Feeder v0.9.5";
+char versionText[] = "MQTT Bottle Feeder v1.0.0";
 
 /* ------------------------------------------------------------ */
 
@@ -178,14 +178,16 @@ void listener_Button(int eventCode, int eventParams) {
         case button.EV_HELD_FOR_LONG_ENOUGH:
 
             if (!tDeleteWindow.isEnabled()) {
-                wifiHelper.mqttPublish(FEEDBOTTLE_FEED, TimeDisp);
+                wifiHelper.mqttPublish(FEEDBOTTLE_FEED, "1");
                 sevenSegDisplayTime();
                 pixels.setPixelColor(0, COLOR_DELETE_WINDOW);
                 pixels.show();
                 tDeleteWindow.restart();
                 tOneFlash.restart();
             } else {
-                Serial.println("Deleting time!");
+                wifiHelper.mqttPublish(FEEDBOTTLE_FEED, "2");
+                sevenSegClear();
+                tDeleteWindow.disable();
             }
 
             break;
