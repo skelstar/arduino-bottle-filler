@@ -113,12 +113,25 @@ bool callback_occurred = false;
 
 void devtime_callback(byte* payload, unsigned int length) {
 
+    if (payload[0] == '-') {
+        hour = -1;
+    } else {
+        hour = (payload[0]-'0') * 10;
+        hour += payload[1]-'0';
+        minute = (payload[3]-'0') * 10;
+        minute += payload[4]-'0';
+    }
+
     TimeDisp[0] = payload[0];
     TimeDisp[1] = payload[1];
     TimeDisp[3] = payload[3];
     TimeDisp[4] = payload[4];
 
     callback_occurred = true;
+
+    if ((hour >= 6 && minute == 0) && (hour <= 18 && minute == 0)) {
+        sevenSegClear();
+    }
 }
 
 void setup() 
