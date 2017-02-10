@@ -37,8 +37,8 @@ char versionText[] = "MQTT Bottle Feeder v1.0.0";
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
 uint32_t COLOR_BUTTON_PRESSED = pixels.Color(10, 0, 0);
-uint32_t COLOR_DELETE_WINDOW = pixels.Color(0, 20, 0);
-uint32_t COLOR_NORMAL = pixels.Color(50, 0, 0);
+uint32_t COLOR_DELETE_WINDOW = pixels.Color(50, 20, 0);
+uint32_t COLOR_NORMAL = pixels.Color(0, 0, 0);
 uint32_t COLOR_DELETED = pixels.Color(100, 0, 0);
 uint32_t COLOR_OFF = pixels.Color(0, 0, 0);
 
