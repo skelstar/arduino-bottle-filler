@@ -34,7 +34,7 @@
 #define MED_BRIGHT      30
 #define LOW_BRIGHT      15
 
-char versionText[] = "MQTT Bottle Feeder v1.0.0";
+char versionText[] = "MQTT Bottle Feeder v1.1.0";
 
 /* ------------------------------------------------------------ */
 
