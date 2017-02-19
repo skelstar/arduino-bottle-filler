@@ -17,7 +17,7 @@
 #define NEOPIXEL_PIN        D5
 #define NUMPIXELS           1
 #define LONG_PRESS_TIME     1000
-#define DELETE_WINDOW_TIME  3 * 1000
+#define DELETE_WINDOW_TIME  60 * 1000
 #define BUTTON_PIN  D4
 
 #define FEEDBOTTLE_FEED  "/dev/bottleFeed"
