@@ -1,12 +1,10 @@
 
 #include <myWifiHelper.h>
 #include <Adafruit_NeoPixel.h>
-#include <myPushButton.h>
-#include <SevenSegmentTM1637.h>
-#include <SevenSegmentExtended.h>
 #include <TaskScheduler.h>
 #include <Wire.h>
 #include <ADXL345.h>
+#include <TimeLib.h>
 
 
 #ifdef __AVR__
@@ -17,13 +15,16 @@
 #define NEOPIXEL_PIN        D5
 #define NUMPIXELS           1
 #define LONG_PRESS_TIME     1000
-#define DELETE_WINDOW_TIME  60 * 1000
+#define LIGHT_ON_WINDOW_TIME  60 * 1000
 #define BUTTON_PIN  D4
 
 #define FEEDBOTTLE_FEED  "/dev/bottleFeed"
 #define HHmm_FEED        "/dev/HHmm"
 #define WIFI_OTA_NAME   "arduino-bottle-filler"
 #define WIFI_HOSTNAME   "arduino-bottle-filler"
+
+#define BOTTLE_FEED_TRIGGER_EV  "1"
+#define BOTTLE_FEED_IGNORE_EV   "2"
 
 #define CLK D3   // SCL
 #define DIO D4   // SDA
@@ -34,15 +35,13 @@
 #define MED_BRIGHT      30
 #define LOW_BRIGHT      15
 
-char versionText[] = "MQTT Bottle Feeder v1.1.0";
+char versionText[] = "MQTT Bottle Feeder v1.2.0";
 
 /* ------------------------------------------------------------ */
 
-// NEOPIXEL
-
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
-uint32_t COLOR_LIGHT_ON = pixels.Color(10, 0, 0);
+uint32_t COLOR_LIGHT_ON = pixels.Color(40, 0, 0);
 uint32_t COLOR_BUTTON_PRESSED = pixels.Color(10, 0, 0);
 uint32_t COLOR_NORMAL = pixels.Color(1, 0, 0);
 uint32_t COLOR_OFF = pixels.Color(0, 0, 0);
@@ -50,45 +49,27 @@ uint32_t COLOR_OFF = pixels.Color(0, 0, 0);
 /* ----------------------------------------------------------- */
 
 void ledOffCallback();
-void ledOnCallback();
-void deleteWindowCallback();
+void lightOnWindowCallback();
 
 Scheduler runner;
 
-#define FLASH_ONCE 2
-#define FLASH_TWICE 4
-#define FLASH_TEN_TIMES 20
+#define RUN_ONCE 2
 
 uint32_t oldColor;
 
-Task tOneFlash(100, FLASH_ONCE, &ledOffCallback, &runner, false);
-Task tLightOnWindow(DELETE_WINDOW_TIME, FLASH_ONCE, &deleteWindowCallback, &runner, false);
+Task tLightOnWindow(LIGHT_ON_WINDOW_TIME, RUN_ONCE, &lightOnWindowCallback, &runner, false);
 
-void ledOffCallback() {
-    oldColor = pixels.getPixelColor(0);
-    pixels.setPixelColor(0, COLOR_OFF);
-    pixels.show();
-    tOneFlash.setCallback(&ledOnCallback);
-}
+void lightOnWindowCallback() {
 
-void ledOnCallback() {
-    pixels.setPixelColor(0, oldColor);
-    pixels.show();
-    tOneFlash.setCallback(&ledOffCallback);
-}
-
-void deleteWindowCallback() {
-    if (tLightOnWindow.isLastIteration()) {
+    if (tLightOnWindow.isFirstIteration()) {
+        pixels.setPixelColor(0, COLOR_LIGHT_ON);
+        pixels.show();
+    }
+    else if (tLightOnWindow.isLastIteration()) {
         pixels.setPixelColor(0, COLOR_NORMAL);
         pixels.show();
     }
 }
-
-/* ----------------------------------------------------------- */
-
-void listener_Button(int eventCode, int eventParams);
-
-myPushButton button(BUTTON_PIN, true, LONG_PRESS_TIME, 1, listener_Button);
 
 /* ----------------------------------------------------------- */
 
@@ -102,42 +83,26 @@ MyWifiHelper wifiHelper(WIFI_HOSTNAME);
 // CLOCK
 
 char TimeDisp[] = "--:--";
-char OutBuffer[] = "--:--";
 
-SevenSegmentExtended sevenSeg(CLK,DIO);
-
-volatile long lastReadTime = millis();
-long lastLongPressTime = 0;
-
-char msg[5];
-volatile int hour = 0;
-volatile int minute = 0;
+int time_hour = 0;
+int time_minute = 0;
 
 bool callback_occurred = false;
 
 /* ----------------------------------------------------------- */
 
-void devtime_callback(byte* payload, unsigned int length) {
+void devtime_mqttcallback(byte* payload, unsigned int length) {
 
     if (payload[0] == '-') {
-        hour = -1;
+        time_hour = -1;
     } else {
-        hour = (payload[0]-'0') * 10;
-        hour += payload[1]-'0';
-        minute = (payload[3]-'0') * 10;
-        minute += payload[4]-'0';
+        time_hour = (payload[0]-'0') * 10;
+        time_hour += payload[1]-'0';
+        time_minute = (payload[3]-'0') * 10;
+        time_minute += payload[4]-'0';
     }
-
-    TimeDisp[0] = payload[0];
-    TimeDisp[1] = payload[1];
-    TimeDisp[3] = payload[3];
-    TimeDisp[4] = payload[4];
 
     callback_occurred = true;
-
-    if ((hour >= 6 && minute == 0) && (hour <= 18 && minute == 0)) {
-        sevenSegClear();
-    }
 }
 
 void setup() 
@@ -159,87 +124,48 @@ void setup()
     adxl.powerOn();
     setupADXL();
 
-    sevenSeg.begin(); 
-    sevenSegClear();
-
     wifiHelper.setupWifi();
 
     wifiHelper.setupOTA(WIFI_OTA_NAME);
 
     //runner.init();
-    runner.addTask(tOneFlash);
     runner.addTask(tLightOnWindow);
 
     wifiHelper.setupMqtt();
 
-
-
-    wifiHelper.mqttAddSubscription(HHmm_FEED, devtime_callback);
+    wifiHelper.mqttAddSubscription(HHmm_FEED, devtime_mqttcallback);
 }
 
 /* ----------------------------------------------------------- */
 
 void loop() {
 
-    // need this for both subscribing and publishing
     if (!wifiHelper.loopMqttNonBlocking()) {
         Serial.print('.');
     }
 
     ArduinoOTA.handle();
 
-    button.serviceEvents();
-
     byte interrupts = adxl.getInterruptSource();
-    //double tap
-    if (adxl.triggered(interrupts, ADXL345_DOUBLE_TAP)){
-        listener_Button(0, button.EV_HELD_FOR_LONG_ENOUGH);
-        Serial.println("double tap");
+
+    if (adxl.triggered(interrupts, ADXL345_SINGLE_TAP)){
+        Serial.println("single tap");
+        turnFeedLightOn();
     }
 
     runner.execute();
 
-    delay(200);
+    delay(50);
 }
 
-void listener_Button(int eventCode, int eventParams) {
+void turnFeedLightOn() {
 
-    switch (eventParams) {
-        
-        case button.EV_BUTTON_PRESSED:
-            pixels.setPixelColor(0, COLOR_BUTTON_PRESSED);
-            pixels.show();
-            break;          
-        
-        case button.EV_HELD_FOR_LONG_ENOUGH:
-
-            if (!tLightOnWindow.isEnabled()) {
-                wifiHelper.mqttPublish(FEEDBOTTLE_FEED, "1");
-                sevenSegDisplayTime();
-                pixels.setPixelColor(0, COLOR_LIGHT_ON);
-                pixels.show();
-                tLightOnWindow.restart();
-                tOneFlash.restart();
-            } else {
-                wifiHelper.mqttPublish(FEEDBOTTLE_FEED, "2");
-                sevenSegClear();
-                tLightOnWindow.disable();
-            }
-
-            break;
-        
-        case button.EV_RELEASED:
-            pixels.setPixelColor(0, COLOR_NORMAL);
-            pixels.show();
-            break;
-
-        case button.EV_RELEASED_FROM_HELD_TIME:
-            break;
-        
-        case button.EV_DOUBLETAP:
-            //wifiHelper.mqttPublish(FEEDBOTTLE_FEED, "EV_DOUBLETAP");
-            //Serial.println("EV_DOUBLETAP");
-            break;
+    if (!tLightOnWindow.isEnabled()) {
+        wifiHelper.mqttPublish(FEEDBOTTLE_FEED, BOTTLE_FEED_TRIGGER_EV);
+        tLightOnWindow.restart();
+    } else {
+        wifiHelper.mqttPublish(FEEDBOTTLE_FEED, BOTTLE_FEED_IGNORE_EV);
+        tLightOnWindow.disable();
     }
 }
 
@@ -265,10 +191,11 @@ void setupADXL() {
     adxl.setTapDetectionOnZ(1);
 
     //set values for what is a tap, and what is a double tap (0-255)
-    adxl.setTapThreshold(200); //62.5mg per increment    (default 50)
+    adxl.setTapThreshold(100); //62.5mg per increment    (default 50)
     adxl.setTapDuration(15); //625us per increment      (default 15)
+
     adxl.setDoubleTapLatency(80); //1.25ms per increment    (default 80)
-    adxl.setDoubleTapWindow(200); //1.25ms per increment    (default 200)
+    adxl.setDoubleTapWindow(50); //1.25ms per increment    (default 200)
 
     //set values for what is considered freefall (0-255)
     adxl.setFreeFallThreshold(7); //(5 - 9) recommended - 62.5mg per increment
@@ -289,39 +216,3 @@ void setupADXL() {
     adxl.setInterrupt( ADXL345_INT_ACTIVITY_BIT,   1);
     adxl.setInterrupt( ADXL345_INT_INACTIVITY_BIT, 1);
 }
-
-void updateTimeDisp() {
-    Serial.print("hour: "); Serial.println(hour);
-    TimeDisp[0] = hour/10 + '0';
-    TimeDisp[1] = hour%10 + '0';
-    TimeDisp[2] = ':';
-    Serial.print("minute: "); Serial.println(minute);
-    TimeDisp[3] = minute/10 + '0';
-    TimeDisp[4] = minute%10 + '0';
-}
-
-void clearTimeDisp() {
-    TimeDisp[0] = '-';
-    TimeDisp[1] = '-';
-    TimeDisp[2] = ':';
-    TimeDisp[3] = '-';
-    TimeDisp[4] = '-';
-}
-
-void sevenSegClear() {
-    sevenSeg.setBacklight(LOW_BRIGHT);
-    sevenSeg.print("----");
-    clearTimeDisp();
-}
-
-void sevenSegDisplayTime() {
-
-    hour = (TimeDisp[0]-'0') * 10;
-    hour += TimeDisp[1]-'0';
-    minute = (TimeDisp[3]-'0') * 10;
-    minute += TimeDisp[4]-'0';
-
-    sevenSeg.setBacklight(MED_BRIGHT);
-    sevenSeg.printTime(hour, minute, false);
-}
-
