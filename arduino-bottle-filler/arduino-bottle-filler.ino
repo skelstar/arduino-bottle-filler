@@ -21,8 +21,6 @@
 
 #define MQTT_EVENT_BOTTLE       "/dev/bottleFeed"
 
-#define MQTT_EVENT_HHMM        "/dev/HHmm"
-#define MQTT_EVENT_TIMESTAMP    "/dev/timestamp"
 #define WIFI_OTA_NAME   "arduino-bottle-filler"
 #define WIFI_HOSTNAME   "arduino-bottle-filler"
 
@@ -90,37 +88,6 @@ void lightOnWindowCallback() {
 MyWifiHelper wifiHelper(WIFI_HOSTNAME);
 
 /* ----------------------------------------------------------- */
-// CLOCK
-
-// char TimeDisp[] = "--:--";
-
-// int time_hour = 0;
-// int time_minute = 0;
-
-// bool callback_occurred = false;
-
-/* ----------------------------------------------------------- */
-
-// void devtime_mqttcallback(byte* payload, unsigned int length) {
-
-//     if (payload[0] == '-') {
-//         time_hour = -1;
-//     } else {
-//         time_hour = (payload[0]-'0') * 10;
-//         time_hour += payload[1]-'0';
-//         time_minute = (payload[3]-'0') * 10;
-//         time_minute += payload[4]-'0';
-//     }
-
-//     callback_occurred = true;
-// }
-
-// void devtimestamp_mqttcallback(byte* payload, unsigned int length) {
-//     unsigned long pctime = strtoul((char*)payload, NULL, 10);
-//     setTime(pctime);
-// }
-
-/* ----------------------------------------------------------- */
 
 void setup() 
 {
@@ -136,9 +103,6 @@ void setup()
     runner.addTask(tLightOnWindow);
 
     wifiHelper.setupMqtt();
-
-    //wifiHelper.mqttAddSubscription(MQTT_EVENT_HHMM, devtime_mqttcallback);
-    //wifiHelper.mqttAddSubscription(MQTT_EVENT_TIMESTAMP, devtimestamp_mqttcallback);
 
     pinMode(RELAY_PIN, OUTPUT);
     digitalWrite(RELAY_PIN, LOW);
