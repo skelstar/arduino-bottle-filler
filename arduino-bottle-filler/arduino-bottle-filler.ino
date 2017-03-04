@@ -13,7 +13,7 @@
 #define NEOPIXEL_PIN        D5
 #define NUMPIXELS           1
 #define LONG_PRESS_TIME     1000
-#define LIGHT_ON_WINDOW_TIME  30 * 1000
+#define LIGHT_ON_WINDOW_TIME  40 * 1000
 
 #define BUTTON_PIN          D3
 #define BUTTON_PIN_GND      D2
