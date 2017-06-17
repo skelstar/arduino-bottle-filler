@@ -3,53 +3,68 @@
 #include <TaskScheduler.h>
 #include <TimeLib.h>
 #include <myPushButton.h>
+#include <Adafruit_NeoPixel.h>
 
 
-#ifdef __AVR__
-  #include <avr/power.h>
-#endif
+#define 	WIFI_HOSTNAME   			"arduino-bottle-filler"
+
+#define     TOPIC_TIMESTAMP             "/dev/timestamp"
+#define     TOPIC_COMMAND               "/liamsroom/bottle-filler/command"
+#define     TOPIC_ONLINE                "/liamsroom/bottle-filler/online"
+#define 	TOPIC_EVENT					"/liamsroom/bottle-filler/event"
 
 
-#define NEOPIXEL_PIN        D5
-#define NUMPIXELS           1
-#define LONG_PRESS_TIME     1000
-#define LIGHT_ON_WINDOW_TIME  40 * 1000
+#define 	BUTTON_PIN          2
+#define 	PIXEL_PIN			0
+#define 	NUMPIXELS           1
 
-#define BUTTON_PIN          D3
-#define BUTTON_PIN_GND      D2
-#define RELAY_PIN           D1
+/* ----------------------------------------------------------- */
 
-#define MQTT_EVENT_BOTTLE       "/dev/bottleFeed"
+Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, PIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
-#define WIFI_OTA_NAME   "arduino-bottle-filler"
-#define WIFI_HOSTNAME   "arduino-bottle-filler"
+/* ----------------------------------------------------------- */
 
-#define BOTTLE_FEED_TRIGGER_EV  "1"
-#define BOTTLE_FEED_IGNORE_EV   "2"
+MyWifiHelper wifiHelper(WIFI_HOSTNAME);
 
-#define CLK D3   // SCL
-#define DIO D4   // SDA
+void mqttcallback_Timestamp(byte *payload, unsigned int length) {
+    wifiHelper.mqttPublish(TOPIC_ONLINE, "1");
+}
 
-#define SCL D1   // SCL
-#define SDA D2   // SDA
 
-#define MED_BRIGHT      30
-#define LOW_BRIGHT      15
+void mqttcallback_Command(byte *payload, unsigned int length) {
 
-char versionText[] = "MQTT Bottle Feeder v1.3.1";
+	//Serial.println("command: "); Serial.println((char*) payload);
+    JsonObject& root = wifiHelper.mqttGetJson(payload);
+    const char* command = root["command"];
+    const char* value = root["value"];
+    const char* brightness = root["param1"]; 
+
+    if (strcmp(command, "LED") == 0) {
+		int bright = atoi(brightness);
+		
+		if (strcmp(value, "ON") == 0) {
+			turnLight(true, bright);
+		} else if (strcmp(value, "OFF") == 0) {
+			turnLight(false, bright);
+		}
+	}
+}
 
 /* ----------------------------------------------------------- */
 
 void listener_Button( int eventCode, int eventParam );
 
-myPushButton button(BUTTON_PIN, true, LONG_PRESS_TIME, 1, listener_Button);
+#define 	LONG_PRESS_TIME		1000
+#define 	ACTIVE_HIGH			1
+#define		PULLUP				true
+myPushButton button(BUTTON_PIN, PULLUP, LONG_PRESS_TIME, ACTIVE_HIGH, listener_Button);
 
 void listener_Button( int eventCode, int eventParam ) {
 
      switch (eventParam) {
         
         case button.EV_HELD_FOR_LONG_ENOUGH:
-            turnFeedLightOn();
+        	wifiHelper.mqttPublish(TOPIC_EVENT, "1");
             break;
         
         case button.EV_RELEASED_FROM_HELD_TIME:
@@ -59,33 +74,7 @@ void listener_Button( int eventCode, int eventParam ) {
 
 /* ----------------------------------------------------------- */
 
-void ledOffCallback();
-void lightOnWindowCallback();
-
 Scheduler runner;
-
-#define RUN_ONCE 2
-
-uint32_t oldColor;
-
-Task tLightOnWindow(LIGHT_ON_WINDOW_TIME, RUN_ONCE, &lightOnWindowCallback, &runner, false);
-
-void lightOnWindowCallback() {
-    Serial.println("lightOnWindowCallback");
-    if (tLightOnWindow.isFirstIteration()) {
-        Serial.println("isFirstIteration");
-        digitalWrite(RELAY_PIN, HIGH);
-    }
-    else if (tLightOnWindow.isLastIteration()) {
-        Serial.println("isLastIteration");
-        Serial.println("Turning light OFF");
-        digitalWrite(RELAY_PIN, LOW);
-    }
-}
-
-/* ----------------------------------------------------------- */
-
-MyWifiHelper wifiHelper(WIFI_HOSTNAME);
 
 /* ----------------------------------------------------------- */
 
@@ -94,21 +83,22 @@ void setup()
     Serial.begin(9600);
     delay(50);
     Serial.println("Booting");
-    Serial.println(versionText);
+
+	pixels.begin(); 
+
+	pixels.setPixelColor(0, pixels.Color(0, 1, 0)); // Moderately bright green color.
+    pixels.show();
 
     wifiHelper.setupWifi();
 
-    wifiHelper.setupOTA(WIFI_OTA_NAME);
-
-    runner.addTask(tLightOnWindow);
+    wifiHelper.setupOTA(WIFI_HOSTNAME);
 
     wifiHelper.setupMqtt();
+    wifiHelper.mqttAddSubscription(TOPIC_TIMESTAMP, mqttcallback_Timestamp);
+    wifiHelper.mqttAddSubscription(TOPIC_COMMAND, mqttcallback_Command);
 
-    pinMode(RELAY_PIN, OUTPUT);
-    digitalWrite(RELAY_PIN, LOW);
-
-    pinMode(BUTTON_PIN_GND, OUTPUT);
-    digitalWrite(BUTTON_PIN_GND, LOW);
+    pixels.setPixelColor(0, pixels.Color(0, 0, 0));
+    pixels.show();
 }
 
 /* ----------------------------------------------------------- */
@@ -119,26 +109,25 @@ void loop() {
         Serial.print('.');
     }
 
+    wifiHelper.loopMqtt();
+
     button.serviceEvents();
 
     ArduinoOTA.handle();
 
     runner.execute();
 
-    digitalWrite(BUTTON_PIN_GND, LOW);
-
     delay(50);
 }
 
-void turnFeedLightOn() {
+void turnLight(bool on, int brightness) {
 
-    if (!tLightOnWindow.isEnabled()) {
-        wifiHelper.mqttPublish(MQTT_EVENT_BOTTLE, BOTTLE_FEED_TRIGGER_EV);
-        Serial.println("Turning light ON");
-        tLightOnWindow.restart();
+    if (on) {
+        pixels.setPixelColor(0, pixels.Color(0, 0, brightness));
+        pixels.show();
     } else {
-        wifiHelper.mqttPublish(MQTT_EVENT_BOTTLE, BOTTLE_FEED_IGNORE_EV);
-        tLightOnWindow.disable();
+        pixels.setPixelColor(0, pixels.Color(0, 0, 0));
+        pixels.show();
     }
 }
 
